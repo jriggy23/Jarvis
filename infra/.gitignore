@@ -1,0 +1,19 @@
+# Local Terraform state & caches (real state lives in the azurerm backend)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Variable files that may contain secrets — keep out of git
+*.tfvars
+*.tfvars.json
+!example.tfvars
+
+# CLI plan output
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
