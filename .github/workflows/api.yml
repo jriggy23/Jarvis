@@ -1,0 +1,56 @@
+name: API (Container App)
+
+# Builds the Jarvis Node/TypeScript orchestrator from api/, pushes the image to
+# ACR with `az acr build`, and rolls the jarvis-api Container App to it.
+#   - Push to main touching api/  -> build + push + deploy
+#   - workflow_dispatch           -> manual run
+#
+# Auth: GitHub OIDC -> Entra federated credential on the Jarvis SPN (Contributor
+# on the subscription). `az acr build` is a control-plane op, so Contributor is
+# sufficient and no AcrPush role / docker login is required.
+
+on:
+  push:
+    branches: [main]
+    paths: ["api/**", ".github/workflows/api.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC azure/login
+  contents: read
+
+env:
+  ACR_NAME: jarvisacr3qo9wq
+  IMAGE_NAME: jarvis-api
+  RESOURCE_GROUP: Jarvis
+  CONTAINER_APP: jarvis-api
+
+jobs:
+  build_and_deploy:
+    name: build-and-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push image (az acr build)
+        run: |
+          az acr build \
+            --registry "$ACR_NAME" \
+            --image "${IMAGE_NAME}:${{ github.sha }}" \
+            --image "${IMAGE_NAME}:latest" \
+            ./api
+
+      - name: Update Container App to new image
+        run: |
+          az containerapp update \
+            -n "$CONTAINER_APP" \
+            -g "$RESOURCE_GROUP" \
+            --image "${ACR_NAME}.azurecr.io/${IMAGE_NAME}:${{ github.sha }}"
