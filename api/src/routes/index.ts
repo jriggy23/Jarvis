@@ -32,8 +32,8 @@ export function buildRouter(deps: RouterDeps): Router {
       features: {
         speech: true,
         voicePicker: true,
-        // Brain is a stub until step 3 (Claude Agent SDK).
-        brainStub: true,
+        // Real Claude brain via the Claude Agent SDK (Max-subscription OAuth).
+        brainStub: false,
       },
     });
   };

@@ -8,7 +8,7 @@ import express from "express";
 import http from "http";
 import { loadConfig } from "./config/secrets";
 import { AzureSpeechProvider } from "./providers/azureSpeech";
-import { StubBrainProvider } from "./providers/stubBrain";
+import { ClaudeBrainProvider } from "./providers/claudeBrain";
 import { buildRouter } from "./routes";
 import { SessionStore } from "./sessions";
 import { attachRealtime } from "./ws/realtime";
@@ -23,7 +23,11 @@ async function main(): Promise<void> {
   const config = await loadConfig();
 
   const voiceProvider = new AzureSpeechProvider(config.speechKey, config.speechRegion);
-  const brainProvider = new StubBrainProvider();
+  const brainProvider = new ClaudeBrainProvider();
+  console.log(
+    `[brain] Claude Agent SDK brain ready: model=${process.env.CLAUDE_MODEL || "claude-opus-4-8"}, ` +
+      `auth=${process.env.CLAUDE_CODE_OAUTH_TOKEN ? "Claude Max OAuth" : "MISSING (awaiting claude-oauth-token)"}`,
+  );
   const store = new SessionStore(config.defaultVoiceId);
 
   // Eagerly validate the Speech provider initialised (proves the key loaded).
