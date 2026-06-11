@@ -3,7 +3,7 @@ import { useEffect, useRef } from "react";
 export type OrbState = "idle" | "listening" | "thinking" | "speaking";
 
 type Props = {
-  /** Hex color, e.g. "#39c6ff". */
+  /** Hex color, e.g. "#ff9e3d". */
   color: string;
   /** Current conversational state. */
   state: OrbState;
@@ -28,10 +28,12 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 /**
- * Canvas-rendered "presence" orb. Animates independently of React via rAF;
- * the latest props are read through refs so the loop never restarts.
+ * "Presence" orb: a swarm of glowing particles around a hot core. Each particle
+ * follows its own random path — it orbits the centre about a randomly-oriented
+ * axis at its own speed — so the dots drift along independent trajectories
+ * rather than sitting on a fixed lattice. No dot-to-dot links.
  */
-export default function JarvisOrb({ color, state, amplitude = 0, size = 280 }: Props) {
+export default function JarvisOrb({ color, state, amplitude = 0, size = 320 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const props = useRef({ color, state, amplitude });
   props.current = { color, state, amplitude };
@@ -49,186 +51,215 @@ export default function JarvisOrb({ color, state, amplitude = 0, size = 280 }: P
 
     const cx = size / 2;
     const cy = size / 2;
-    const baseR = size * 0.28;
+    const baseR = size * 0.4;
+    const focal = 2.7; // perspective focal length, in sphere-radius units
+
+    // ---- Build particles -------------------------------------------------
+    // Each particle starts on the unit sphere and rotates about its own random
+    // axis. Using Rodrigues' formula with precomputed terms, its animated
+    // position is: v·cosθ + (k×v)·sinθ + k(k·v)(1-cosθ), θ = phase + speed·clock.
+    const N = 540;
+    type P = {
+      // base vector v
+      vx: number;
+      vy: number;
+      vz: number;
+      // k × v
+      cx: number;
+      cy: number;
+      cz: number;
+      // k * (k·v)
+      kx: number;
+      ky: number;
+      kz: number;
+      speed: number;
+      phase: number;
+      wob: number; // radial wobble frequency
+      hot: boolean;
+    };
+
+    const rand = () => Math.random();
+    const unit = (): [number, number, number] => {
+      const u = rand() * 2 - 1;
+      const ph = rand() * Math.PI * 2;
+      const s = Math.sqrt(1 - u * u);
+      return [s * Math.cos(ph), s * Math.sin(ph), u];
+    };
+
+    const parts: P[] = [];
+    for (let i = 0; i < N; i++) {
+      const [vx, vy, vz] = unit();
+      const [kx, ky, kz] = unit();
+      const kdv = kx * vx + ky * vy + kz * vz;
+      // k × v
+      const cxv = ky * vz - kz * vy;
+      const cyv = kz * vx - kx * vz;
+      const czv = kx * vy - ky * vx;
+      parts.push({
+        vx,
+        vy,
+        vz,
+        cx: cxv,
+        cy: cyv,
+        cz: czv,
+        kx: kx * kdv,
+        ky: ky * kdv,
+        kz: kz * kdv,
+        speed: (rand() < 0.5 ? -1 : 1) * (0.1 + rand() * 0.4),
+        phase: rand() * Math.PI * 2,
+        wob: 0.4 + rand() * 1.2,
+        hot: rand() < 0.12,
+      });
+    }
+
     let raf = 0;
     let smoothAmp = 0;
+    let clock = 0;
+    let lastT = 0;
 
-    const render = (t: number) => {
+    const render = (tms: number) => {
       const { color: c, state: s, amplitude: amp } = props.current;
       const [r, g, b] = hexToRgb(c);
-      const rgb = (a: number) => `rgba(${r},${g},${b},${a})`;
+      const col = (a: number) => `rgba(${r},${g},${b},${a})`;
+      const time = tms / 1000;
 
-      // Smooth the incoming amplitude so the orb glides rather than jitters.
       smoothAmp += (amp - smoothAmp) * 0.18;
+      const breathe = 0.5 + 0.5 * Math.sin(time * 0.9);
 
-      // Idle "breathing" + a slow drift used by the thinking swirl.
-      const breathe = 0.5 + 0.5 * Math.sin(t / 1400);
-      const time = t / 1000;
-
-      // Per-state pulse contribution.
-      let pulse = 0;
+      // Per-state energy: drift rate, glow boost, outward swell.
+      let rate: number;
+      let boost: number;
+      let swell: number;
       switch (s) {
-        case "idle":
-          pulse = breathe * 0.06;
-          break;
         case "listening":
-          pulse = 0.05 + smoothAmp * 0.45;
+          rate = 1.4 + smoothAmp * 2.5;
+          boost = 0.2 + smoothAmp * 0.9;
+          swell = smoothAmp * 0.06;
           break;
         case "thinking":
-          pulse = 0.12 + 0.06 * Math.sin(time * 6);
+          rate = 2.8;
+          boost = 0.45 + 0.1 * Math.sin(time * 7);
+          swell = 0.03;
           break;
         case "speaking":
-          pulse = 0.08 + smoothAmp * 0.5;
+          rate = 1.3 + smoothAmp * 2.0;
+          boost = 0.3 + smoothAmp * 1.0;
+          swell = 0.06 + smoothAmp * 0.34; // swarm pushes outward
           break;
+        default: // idle
+          rate = 0.85;
+          boost = 0.08 + breathe * 0.05;
+          swell = 0.01 * breathe;
       }
 
-      const radius = baseR * (1 + pulse);
+      // Advance a rate-scaled clock (smooth even when rate changes).
+      const dt = lastT ? Math.min(0.05, (tms - lastT) / 1000) : 0;
+      lastT = tms;
+      clock += dt * rate;
+
+      const sphereR = baseR * (1 + swell);
+      const ax = 0.42; // fixed viewing tilt about X
+      const cax = Math.cos(ax);
+      const sax = Math.sin(ax);
 
       ctx.clearRect(0, 0, size, size);
+      ctx.globalCompositeOperation = "lighter";
 
       // Outer halo
-      const halo = ctx.createRadialGradient(cx, cy, radius * 0.6, cx, cy, radius * 2.4);
-      halo.addColorStop(0, rgb(0.35 + pulse * 0.4));
-      halo.addColorStop(0.4, rgb(0.12));
-      halo.addColorStop(1, rgb(0));
+      const halo = ctx.createRadialGradient(cx, cy, sphereR * 0.5, cx, cy, sphereR * 1.7);
+      halo.addColorStop(0, col(0.16 + boost * 0.12));
+      halo.addColorStop(0.5, col(0.05));
+      halo.addColorStop(1, col(0));
       ctx.fillStyle = halo;
       ctx.fillRect(0, 0, size, size);
 
-      // Core sphere
-      const core = ctx.createRadialGradient(
-        cx - radius * 0.3,
-        cy - radius * 0.3,
-        radius * 0.1,
-        cx,
-        cy,
-        radius,
-      );
-      core.addColorStop(0, "rgba(255,255,255,0.95)");
-      core.addColorStop(0.25, rgb(0.95));
-      core.addColorStop(0.7, rgb(0.55));
-      core.addColorStop(1, rgb(0.08));
+      // Hot core glow
+      const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, sphereR * 0.55);
+      core.addColorStop(0, `rgba(255,244,222,${0.5 + boost * 0.35})`);
+      core.addColorStop(0.25, col(0.38 + boost * 0.2));
+      core.addColorStop(1, col(0));
       ctx.fillStyle = core;
       ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.arc(cx, cy, sphereR * 0.55, 0, Math.PI * 2);
       ctx.fill();
 
-      // ---- Satellite constellation -----------------------------------------
-      // The orb is the "planet"; small satellites ride several orbital shells
-      // at different inclinations (like a GNSS/Starlink constellation). They
-      // orbit by default (the idle/static signature); active states layer
-      // brightness + a slight shell expansion on top. Satellites on the far
-      // side are occluded as they pass behind the planet.
-      const ringAmp = s === "listening" || s === "speaking" ? smoothAmp : breathe * 0.3;
-      const focal = size * 0.95;
+      // Particles along their own random paths
+      for (let i = 0; i < N; i++) {
+        const pt = parts[i];
+        const th = pt.phase + pt.speed * clock;
+        const ct = Math.cos(th);
+        const st = Math.sin(th);
+        const omc = 1 - ct;
+        // Rodrigues rotation of v about axis k
+        let x = pt.vx * ct + pt.cx * st + pt.kx * omc;
+        let y = pt.vy * ct + pt.cy * st + pt.ky * omc;
+        let z = pt.vz * ct + pt.cz * st + pt.kz * omc;
+        // gentle radial wobble so paths breathe in/out
+        const rl = 1 + 0.04 * Math.sin(time * pt.wob + pt.phase);
+        x *= rl;
+        y *= rl;
+        z *= rl;
+        // viewing tilt about X
+        const y2 = y * cax - z * sax;
+        const z2 = y * sax + z * cax;
+        const p = focal / (focal - z2);
+        const sx = cx + x * sphereR * p;
+        const sy = cy + y2 * sphereR * p;
+        const depth = (z2 + 1) / 2; // 0 far, 1 near
 
-      // Activity multiplier: how much faster/brighter than the resting orbit.
-      const act =
-        s === "thinking"
-          ? 2.6
-          : s === "speaking"
-            ? 1.0 + smoothAmp * 2.5
-            : s === "listening"
-              ? 1.0 + smoothAmp * 2.5
-              : 1; // idle/static = gentle default orbit
+        if (pt.hot) {
+          const rad = size * 0.00275 * p * (0.5 + depth * 0.9);
+          const al = (0.25 + depth * 0.7) * (0.7 + boost * 0.6);
+          const g2 = ctx.createRadialGradient(sx, sy, 0, sx, sy, rad * 3);
+          g2.addColorStop(0, `rgba(255,246,226,${Math.min(1, al)})`);
+          g2.addColorStop(0.5, col(al * 0.5));
+          g2.addColorStop(1, col(0));
+          ctx.fillStyle = g2;
+          ctx.beginPath();
+          ctx.arc(sx, sy, rad * 3, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          const rad = Math.max(0.3, size * 0.0028 * p * (0.5 + depth * 0.8));
+          ctx.fillStyle = col((0.12 + depth * 0.6) * (0.7 + boost * 0.5));
+          ctx.beginPath();
+          ctx.arc(sx, sy, rad, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
 
-      // Orbital shells: inclination, ascending-node rotation, radius, speed,
-      // satellite count, phase offset.
-      // All shells share the same radius (a constellation sphere) and are
-      // spaced evenly: inclination is distributed across the poles and the
-      // ascending node is fanned evenly around the sphere.
-      const SHELL_R = 1.16;
-      const RING_COUNT = 14;
-      const ORBITS = Array.from({ length: RING_COUNT }, (_, i) => ({
-        inc: ((i + 0.5) / RING_COUNT) * Math.PI, // evenly spaced 0..π (no poles)
-        node: (i / RING_COUNT) * Math.PI * 2, // evenly fanned around
-        r: SHELL_R,
-        speed: (i % 2 === 0 ? 1 : -1) * (0.16 + (i % 3) * 0.04),
-        count: 28,
-        phase: (i / RING_COUNT) * Math.PI * 2,
-      }));
-
-      // While speaking, satellites push outward from the orb with the voice
-      // level (a "breathing out" on speech); other states stay near their shell.
-      const expand = s === "speaking" ? 1 + smoothAmp * 0.75 : 1;
-
-      type Sat = { sx: number; sy: number; z: number; depth: number };
-      const sats: Sat[] = [];
-
-      for (const o of ORBITS) {
-        const R = radius * o.r * (1 + ringAmp * 0.1) * expand;
-        const ci = Math.cos(o.inc);
-        const si = Math.sin(o.inc);
-        const cn = Math.cos(o.node);
-        const sn = Math.sin(o.node);
-
-        // Faint orbit trace.
-        ctx.globalCompositeOperation = "lighter";
+      // Tangled bright core filaments (a few rotating loops)
+      for (let k = 0; k < 3; k++) {
+        const rr = sphereR * (0.05 + 0.045 * k);
+        const ph = clock * (0.8 + k * 0.4) + k;
+        ctx.strokeStyle = `rgba(255,242,216,${(0.26 - k * 0.06) * (0.6 + boost * 0.5)})`;
+        ctx.lineWidth = 1.1;
         ctx.beginPath();
-        for (let k = 0; k <= 72; k++) {
-          const a = (k / 72) * Math.PI * 2;
-          const x = Math.cos(a) * R;
-          const z0 = Math.sin(a) * R;
-          const y1 = -z0 * si;
-          const z1 = z0 * ci;
-          const x2 = x * cn + z1 * sn;
-          const z2 = -x * sn + z1 * cn;
-          const pp = focal / (focal - z2);
-          const px = cx + x2 * pp;
-          const py = cy + y1 * pp;
-          if (k === 0) ctx.moveTo(px, py);
+        for (let t = 0; t <= 40; t++) {
+          const u = (t / 40) * Math.PI * 2;
+          const px = cx + Math.cos(u + ph) * rr * (1 + 0.4 * Math.sin(u * 3 + ph));
+          const py = cy + Math.sin(u - ph) * rr * (0.7 + 0.4 * Math.cos(u * 2));
+          if (t === 0) ctx.moveTo(px, py);
           else ctx.lineTo(px, py);
         }
-        ctx.strokeStyle = rgb(0.05 + ringAmp * 0.05);
-        ctx.lineWidth = 1;
         ctx.stroke();
-
-        // Satellites on this shell.
-        for (let i = 0; i < o.count; i++) {
-          const a = (i / o.count) * Math.PI * 2 + time * o.speed * act + o.phase;
-          const x = Math.cos(a) * R;
-          const z0 = Math.sin(a) * R;
-          const y1 = -z0 * si;
-          const z1 = z0 * ci;
-          const x2 = x * cn + z1 * sn;
-          const z2 = -x * sn + z1 * cn;
-          const pp = focal / (focal - z2);
-          const sx = cx + x2 * pp;
-          const sy = cy + y1 * pp;
-
-          // Occlude satellites passing behind the planet.
-          const behind = z2 < 0;
-          if (behind && Math.hypot(sx - cx, sy - cy) < radius * 0.95) continue;
-
-          sats.push({ sx, sy, z: z2, depth: (z2 / R + 1) / 2 });
-        }
       }
 
-      // Draw back-to-front so nearer satellites overlap farther ones.
-      sats.sort((p, q) => p.z - q.z);
-      ctx.globalCompositeOperation = "lighter";
-      for (const st of sats) {
-        const pp = focal / (focal - st.z);
-        const dotR = Math.max(0.15, size * 0.0015 * pp * (0.5 + st.depth * 0.7));
-        const alpha = (0.3 + st.depth * 0.6) * (0.7 + ringAmp * 0.5);
-
-        // Small glow.
-        const g = ctx.createRadialGradient(st.sx, st.sy, 0, st.sx, st.sy, dotR * 3.2);
-        g.addColorStop(0, rgb(Math.min(1, alpha)));
-        g.addColorStop(0.5, rgb(alpha * 0.4));
-        g.addColorStop(1, rgb(0));
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.arc(st.sx, st.sy, dotR * 3.2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Bright satellite point.
-        ctx.fillStyle = `rgba(255,255,255,${0.45 + st.depth * 0.5})`;
-        ctx.beginPath();
-        ctx.arc(st.sx, st.sy, dotR, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      // Planetary limb — faint shell + brighter top-left highlight
       ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = col(0.05);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, sphereR * 1.02, 0, Math.PI * 2);
+      ctx.stroke();
 
+      ctx.globalCompositeOperation = "lighter";
+      ctx.strokeStyle = col(0.12 + boost * 0.1);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, sphereR * 1.02, Math.PI * 0.78, Math.PI * 1.5);
+      ctx.stroke();
+
+      ctx.globalCompositeOperation = "source-over";
       raf = requestAnimationFrame(render);
     };
 

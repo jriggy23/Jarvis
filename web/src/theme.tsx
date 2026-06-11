@@ -10,8 +10,9 @@ import {
 
 /** Preset orb colors. The first is the default "arc-reactor" blue. */
 export const ORB_PRESETS: { name: string; value: string }[] = [
-  { name: "Arc Blue", value: "#39c6ff" },
+  { name: "Ember", value: "#ff9e3d" },
   { name: "Stark Gold", value: "#ffb347" },
+  { name: "Arc Blue", value: "#39c6ff" },
   { name: "Emerald", value: "#34e0a1" },
   { name: "Violet", value: "#9d7bff" },
   { name: "Crimson", value: "#ff5d6c" },
