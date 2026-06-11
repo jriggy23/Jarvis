@@ -152,6 +152,14 @@ resource "azurerm_container_app" "api" {
     identity_ids = [azurerm_user_assigned_identity.app.id]
   }
 
+  # The api CI pipeline (.github/workflows/api.yml) rolls the Container App to a
+  # new image via `az containerapp update`. Ignore image drift here so a later
+  # `terraform apply` does not revert it to the placeholder/var default. This is
+  # a state-only concern; the plan shows no resource change.
+  lifecycle {
+    ignore_changes = [template[0].container[0].image]
+  }
+
   registry {
     server               = azurerm_container_registry.acr.login_server
     username             = azurerm_container_registry.acr.admin_username
