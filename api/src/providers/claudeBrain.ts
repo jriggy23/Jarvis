@@ -61,22 +61,37 @@ export class ClaudeBrainProvider implements BrainProvider {
       maxTurns: 1,
       // No interactive permission prompts in a headless service.
       permissionMode: "bypassPermissions",
+      // Surface the bundled CLI's stderr so spawn/auth failures are diagnosable.
+      stderr: (data: string) => {
+        if (data && data.trim()) console.error("[claude-cli]", data.trimEnd());
+      },
     };
 
     const prompt = buildPrompt(history, userText);
 
-    for await (const message of query({ prompt, options })) {
-      // Token-level text deltas arrive as raw streaming events.
-      if (message.type === "stream_event") {
-        const ev = message.event;
-        if (
-          ev.type === "content_block_delta" &&
-          ev.delta.type === "text_delta" &&
-          ev.delta.text
-        ) {
-          yield ev.delta.text;
+    try {
+      for await (const message of query({ prompt, options })) {
+        // Token-level text deltas arrive as raw streaming events.
+        if (message.type === "stream_event") {
+          const ev = message.event;
+          if (
+            ev.type === "content_block_delta" &&
+            ev.delta.type === "text_delta" &&
+            ev.delta.text
+          ) {
+            yield ev.delta.text;
+          }
+        } else if (message.type === "result") {
+          // Log non-success results (error subtypes carry the cause).
+          const r = message as unknown as { subtype?: string };
+          if (r.subtype && r.subtype !== "success") {
+            console.error("[claude-brain] result:", JSON.stringify(message));
+          }
         }
       }
+    } catch (err) {
+      console.error("[claude-brain] query failed:", err);
+      throw err;
     }
   }
 }
