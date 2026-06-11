@@ -1,0 +1,90 @@
+name: Infra (Terraform)
+
+# Deploys the Jarvis v1 Azure stack from infra/ using Terraform.
+#   - Pull requests touching infra/  -> fmt + validate + plan (no changes applied)
+#   - Push to main touching infra/    -> apply
+#
+# Auth: GitHub OIDC -> Entra federated credential on the Jarvis SPN.
+# No long-lived cloud credentials are stored in GitHub.
+
+on:
+  push:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/infra.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/infra.yml"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # required for OIDC azure/login
+  contents: read
+  pull-requests: write
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: "true"
+  # Remote state backend (bootstrapped out-of-band in the Jarvis RG)
+  TFSTATE_RG: Jarvis
+  TFSTATE_SA: jarvistfstatea44771
+  TFSTATE_CONTAINER: tfstate
+  TF_WORKING_DIR: infra
+
+jobs:
+  terraform:
+    name: terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch state storage key
+        # Contributor can list keys; this feeds the azurerm backend without a
+        # data-plane role assignment. Masked so it never appears in logs.
+        run: |
+          KEY=$(az storage account keys list \
+            --resource-group "$TFSTATE_RG" \
+            --account-name "$TFSTATE_SA" \
+            --query "[0].value" -o tsv)
+          echo "::add-mask::$KEY"
+          echo "ARM_ACCESS_KEY=$KEY" >> "$GITHUB_ENV"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=$TFSTATE_RG" \
+            -backend-config="storage_account_name=$TFSTATE_SA" \
+            -backend-config="container_name=$TFSTATE_CONTAINER" \
+            -backend-config="key=jarvis-infra.tfstate"
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        if: github.event_name == 'pull_request'
+        run: terraform plan -input=false -no-color
+
+      - name: Terraform apply
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: terraform apply -input=false -auto-approve -no-color
