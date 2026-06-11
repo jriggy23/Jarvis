@@ -1,0 +1,74 @@
+name: Web (Static Web App)
+
+# Builds the Jarvis Vite/React SPA from web/ and deploys it to the
+# jarvis-web Azure Static Web App.
+#   - Pull requests touching web/  -> build + deploy to a per-PR preview env
+#   - Push to main touching web/   -> build + deploy to production
+#   - PR closed                    -> tear down the preview env
+#
+# Auth: the SWA deployment token in the AZURE_STATIC_WEB_APPS_API_TOKEN secret.
+# The app is built in a dedicated step (npm ci / npm run build) and the deploy
+# action runs with skip_app_build so Oryx does not re-build it.
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/web.yml"]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+    paths: ["web/**", ".github/workflows/web.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write   # for the SWA action's PR preview comments
+
+jobs:
+  build_and_deploy:
+    name: build
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "web"
+          output_location: "dist"
+          skip_app_build: true
+
+  close_preview:
+    name: close-preview
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close Azure Static Web Apps preview environment
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: "close"
