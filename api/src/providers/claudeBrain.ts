@@ -61,6 +61,8 @@ export class ClaudeBrainProvider implements BrainProvider {
       maxTurns: 1,
       // No interactive permission prompts in a headless service.
       permissionMode: "bypassPermissions",
+      // TEMP diagnostic: verbose CLI logging routed to the stderr callback.
+      debug: process.env.CLAUDE_DEBUG !== "0",
       // Surface the bundled CLI's stderr so spawn/auth failures are diagnosable.
       stderr: (data: string) => {
         if (data && data.trim()) console.error("[claude-cli]", data.trimEnd());
