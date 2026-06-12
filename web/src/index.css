@@ -31,6 +31,63 @@ body {
   grid-template-rows: auto 1fr auto;
 }
 
+/* ---- Landing / boot screen ---- */
+.landing {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 26px;
+  cursor: pointer;
+  text-align: center;
+  user-select: none;
+  outline: none;
+  animation: landing-in 0.8s ease both;
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+.landing--leaving {
+  opacity: 0;
+  transform: scale(1.04);
+  pointer-events: none;
+}
+.landing__orb {
+  filter: drop-shadow(0 0 40px color-mix(in srgb, var(--orb-color) 35%, transparent));
+}
+.landing__title {
+  margin: 0;
+  font-size: clamp(28px, 5vw, 52px);
+  font-weight: 300;
+  letter-spacing: 0.14em;
+  color: var(--text);
+}
+.landing__hint {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  animation: landing-pulse 2.2s ease-in-out infinite;
+}
+@keyframes landing-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes landing-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
 .app__header {
   padding: 20px 24px;
 }

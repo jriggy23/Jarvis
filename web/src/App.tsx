@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import JarvisOrb, { type OrbState } from "./components/JarvisOrb";
 import OrbColorPicker from "./components/OrbColorPicker";
+import Landing from "./components/Landing";
 import { useTheme } from "./theme";
 
 export default function App() {
   const { orbColor } = useTheme();
+  const [entered, setEntered] = useState(false);
   const [state, setState] = useState<OrbState>("idle");
   const [amplitude, setAmplitude] = useState(0);
   const [text, setText] = useState("");
@@ -71,6 +73,9 @@ export default function App() {
     thinking: "Thinking…",
     speaking: "Speaking…",
   };
+
+  // Show the "Welcome to Jarvis" boot screen on initial load (after all hooks).
+  if (!entered) return <Landing onEnter={() => setEntered(true)} />;
 
   return (
     <div className="app">
