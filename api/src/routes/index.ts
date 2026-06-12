@@ -50,6 +50,28 @@ export function buildRouter(deps: RouterDeps): Router {
     }
   });
 
+  // Synthesize text to speech and return the full audio (audio/mpeg). Used by
+  // the typed path so replies can be spoken; the WS path streams TTS instead.
+  router.post("/tts", async (req: Request, res: Response) => {
+    const text = typeof req.body?.text === "string" ? req.body.text : "";
+    if (!text.trim()) return res.status(400).json({ error: "text is required" });
+    const voiceId =
+      typeof req.body?.voiceId === "string" && req.body.voiceId
+        ? req.body.voiceId
+        : config.defaultVoiceId;
+    try {
+      const chunks: Buffer[] = [];
+      await voiceProvider.synthesize(text, voiceId, (c) => chunks.push(c.data));
+      const audio = Buffer.concat(chunks);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", String(audio.length));
+      res.setHeader("Cache-Control", "no-store");
+      res.status(200).send(audio);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Create a session.
   router.post("/sessions", (_req: Request, res: Response) => {
     const session = store.create();
