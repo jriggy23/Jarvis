@@ -59,11 +59,12 @@ export class ClaudeBrainProvider implements BrainProvider {
       includePartialMessages: true,
       // Single model turn per call; we drive multi-turn via history replay.
       maxTurns: 1,
-      // No interactive permission prompts in a headless service.
-      permissionMode: "bypassPermissions",
-      // TEMP diagnostic: verbose CLI logging routed to the stderr callback.
-      debug: process.env.CLAUDE_DEBUG !== "0",
-      // Surface the bundled CLI's stderr so spawn/auth failures are diagnosable.
+      // Tools are disabled (tools: []), so no permission prompts ever occur.
+      // We deliberately do NOT set permissionMode: "bypassPermissions" — its CLI
+      // flag (--dangerously-skip-permissions) refuses to run with root privileges,
+      // and the Container App runs the process as root, which caused the brain to
+      // exit 1 on every turn. With no tools, the default mode never prompts.
+      // Keep the stderr callback so any future CLI failure stays diagnosable.
       stderr: (data: string) => {
         if (data && data.trim()) console.error("[claude-cli]", data.trimEnd());
       },
